@@ -1,122 +1,195 @@
 // ==UserScript==
 // @name YouTube Frame Advance Button
 // @namespace http://tampermonkey.net/
-// @version 0.1
-// @description Adds a button to YouTube's player to trigger frame advance.
+// @version 0.2
+// @description Adds native-style frame advance/rewind buttons to YouTube player.
 // @match https://www.youtube.com/watch?v=*
-// @grant none
 // @updateURL   https://raw.githubusercontent.com/kurtchirhart/youtube-frame-by-frame/master/youtube-frame-by-frame-gm.js
 // @downloadURL https://raw.githubusercontent.com/kurtchirhart/youtube-frame-by-frame/master/youtube-frame-by-frame-gm.js
+// @grant none
 // ==/UserScript==
 
 (function() {
     'use strict';
 
-    // *** FIX FOR TRUSTED TYPES IN CHROME ***
-    // This creates a policy that allows assignment of any string as HTML, effectively
-    // disabling Trusted Types for your script. Use with caution.
+    // *** TIMING & SPEED CONFIGURATION ***
+    const CONFIG = {
+        minBpm: 200, // Starting repeat rate (BPM)
+        maxBpm: 400, // Max repeat rate cap (BPM)
+        initialDelayMs: 300, // Hold duration before repeating starts
+        accelerationDurationMs: 600, // Time to transition from minBpm to maxBpm
+        visualFeedback: true, // Flash button on every tick (manual or auto)
+    };
+
+    const DEBUG = false;
+    let holdTimer = null;
+    let activeOverlay = null;
+
     if (window.trustedTypes && window.trustedTypes.createPolicy) {
         window.trustedTypes.createPolicy('default', {
             createHTML: (string) => string,
-            createScriptURL: (string) => string, // You might need this for scripts if you add them later
-            createScript: (string) => string, // You might need this for scripts if you add them later
+            createScriptURL: (string) => string,
+            createScript: (string) => string,
         });
     }
-    // *** END FIX ***
-    function addFrameButtons() {
-        console.log("xxxxxxxxxxxxxxxxxxxxxx")
-        const playerControls = document.querySelector('.ytp-right-controls'); // Find the controls area
-        if (!playerControls) {
-            return; // If controls not found, try again later
+
+    const SVG_BACKWARD = '<svg height="100%" viewBox="0 0 36 36" width="100%"><path fill="#fff" d="M21.5 12l-6 6 6 6-1.4 1.4-7.4-7.4 7.4-7.4z"/></svg>';
+    const SVG_FORWARD = '<svg height="100%" viewBox="0 0 36 36" width="100%"><path fill="#fff" d="M14.5 12l6 6-6 6 1.4 1.4 7.4-7.4-7.4-7.4z"/></svg>';
+
+    function applyDebugStyle(element) {
+        if (!DEBUG) return;
+        element.style.outline = '2px solid #ff00ff';
+        element.style.backgroundColor = 'rgba(255, 0, 255, 0.3)';
+        element.style.boxSizing = 'border-box';
+    }
+
+    function flashButton(button) {
+        if (!CONFIG.visualFeedback) return;
+        button.style.opacity = '0.3';
+        setTimeout(() => {
+            button.style.opacity = '1.0';
+        }, 50);
+    }
+
+    function createDebugOverlay(button) {
+        if (!DEBUG) return null;
+        let overlay = button.querySelector('.ytp-bpm-debug');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.className = 'ytp-bpm-debug';
+            overlay.style.position = 'absolute';
+            overlay.style.top = '2px';
+            overlay.style.fontSize = '10px';
+            overlay.style.fontWeight = 'bold';
+            overlay.style.color = '#00ffff';
+            overlay.style.textShadow = '0 0 2px #000';
+            overlay.style.pointerEvents = 'none';
+            button.appendChild(overlay);
+        }
+        return overlay;
+    }
+
+    function removeDebugOverlay(button) {
+        const overlay = button.querySelector('.ytp-bpm-debug');
+        if (overlay) {
+            overlay.remove();
+        }
+    }
+
+    function dispatchFrameKey(key, code, keyCode, button, currentBpm = null) {
+        const videoElement = document.querySelector('video');
+        if (!videoElement) return;
+
+        if (!videoElement.paused) {
+            videoElement.pause();
         }
 
-        const frameBackwardButton = document.createElement('button');
-        frameBackwardButton.id = 'ytp-frame-advance-button';
-        frameBackwardButton.className = 'ytp-button'; // Use YouTube's button styling
-        frameBackwardButton.innerHTML = '<'; // You can use an icon or different text
-
-        const frameForwardButton = document.createElement('button');
-        frameForwardButton.id = 'ytp-frame-advance-button';
-        frameForwardButton.className = 'ytp-button'; // Use YouTube's button styling
-        frameForwardButton.innerHTML = '>'; // You can use an icon or different text
-
-
-        // Add styling for the button
-        //GM_addStyle(`
-        //    #ytp-frame-advance-button {
-        //        /* Add your custom styling here */
-        //    }
-        //`);
-
-         frameBackwardButton.addEventListener('click', function() {
-            // Check if the video is paused before attempting frame advance
-            const videoElement = document.querySelector('video');
-            if (videoElement && videoElement.paused) {
-                const keyboardEvent = new KeyboardEvent('keydown', {
-                    key: ',', // Simulate the period key for frame forward
-                    code: 'Comma',
-                    keyCode: 188, // Key code for period
-                    which: 188,
-                    bubbles: true,
-                    cancelable: true
-                });
-                document.dispatchEvent(keyboardEvent);
-            } else if (videoElement && !videoElement.paused) {
-                videoElement.pause(); // Pause the video if it's playing
-                // Then dispatch the frame advance event after a slight delay
-                setTimeout(() => {
-                    const keyboardEvent = new KeyboardEvent('keydown', {
-                        key: ',',
-                        code: 'Comma',
-                        keyCode: 188,
-                        which: 188,
-                        bubbles: true,
-                        cancelable: true
-                    });
-                    document.dispatchEvent(keyboardEvent);
-                }, 50); // Small delay to ensure pause is registered
-            }
+        const keyboardEvent = new KeyboardEvent('keydown', {
+            key: key,
+            code: code,
+            keyCode: keyCode,
+            which: keyCode,
+            bubbles: true,
+            cancelable: true,
         });
+        document.dispatchEvent(keyboardEvent);
 
+        flashButton(button);
 
-        frameForwardButton.addEventListener('click', function() {
-            // Check if the video is paused before attempting frame advance
-            const videoElement = document.querySelector('video');
-            if (videoElement && videoElement.paused) {
-                const keyboardEvent = new KeyboardEvent('keydown', {
-                    key: '.', // Simulate the period key for frame forward
-                    code: 'Period',
-                    keyCode: 190, // Key code for period
-                    which: 190,
-                    bubbles: true,
-                    cancelable: true
-                });
-                document.dispatchEvent(keyboardEvent);
-            } else if (videoElement && !videoElement.paused) {
-                videoElement.pause(); // Pause the video if it's playing
-                // Then dispatch the frame advance event after a slight delay
-                setTimeout(() => {
-                    const keyboardEvent = new KeyboardEvent('keydown', {
-                        key: '.',
-                        code: 'Period',
-                        keyCode: 190,
-                        which: 190,
-                        bubbles: true,
-                        cancelable: true
-                    });
-                    document.dispatchEvent(keyboardEvent);
-                }, 50); // Small delay to ensure pause is registered
-            }
-        });
-
-        playerControls.insertBefore(frameForwardButton, playerControls.firstChild); // Insert the button
-        playerControls.insertBefore(frameBackwardButton, playerControls.firstChild); // Insert the button
+        if (DEBUG && activeOverlay && currentBpm !== null) {
+            activeOverlay.textContent = `${Math.round(currentBpm)}`;
+        }
     }
 
-    // Wait for the YouTube player controls to be available
-    const observer = new MutationObserver(function(mutationsList, observer) {
+    function stopHold(button) {
+        if (holdTimer) {
+            clearTimeout(holdTimer);
+            holdTimer = null;
+        }
+        if (button) {
+            removeDebugOverlay(button);
+        }
+        activeOverlay = null;
+    }
+
+    function getCurrentBpm(elapsedMs) {
+        if (elapsedMs <= 0) return CONFIG.minBpm;
+        if (elapsedMs >= CONFIG.accelerationDurationMs) return CONFIG.maxBpm;
+
+        const progress = elapsedMs / CONFIG.accelerationDurationMs;
+        return CONFIG.minBpm + (progress * (CONFIG.maxBpm - CONFIG.minBpm));
+    }
+
+    function startStepHold(button, key, code, keyCode) {
+        stopHold(button);
+
+        activeOverlay = createDebugOverlay(button);
+
+        // First click (manual trigger)
+        dispatchFrameKey(key, code, keyCode, button, CONFIG.minBpm);
+
+        holdTimer = setTimeout(() => {
+            const repeatStartTime = Date.now();
+
+            function step() {
+                const elapsedMs = Date.now() - repeatStartTime;
+                const currentBpm = getCurrentBpm(elapsedMs);
+
+                dispatchFrameKey(key, code, keyCode, button, currentBpm);
+
+                const nextIntervalMs = 60000 / currentBpm;
+                holdTimer = setTimeout(step, nextIntervalMs);
+            }
+
+            step();
+        }, CONFIG.initialDelayMs);
+    }
+
+    function attachHoldEvents(button, key, code, keyCode) {
+        button.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            startStepHold(button, key, code, keyCode);
+        });
+
+        button.addEventListener('mouseup', () => stopHold(button));
+        button.addEventListener('mouseleave', () => stopHold(button));
+    }
+
+    function createStyledButton(id, svgContent, title) {
+        const btn = document.createElement('button');
+        btn.id = id;
+        btn.className = 'ytp-button';
+        btn.title = title;
+        btn.innerHTML = svgContent;
+
+        btn.style.display = 'inline-flex';
+        btn.style.alignItems = 'center';
+        btn.style.justifyContent = 'center';
+        btn.style.position = 'relative';
+        btn.style.transition = 'opacity 0.05s ease';
+
+        applyDebugStyle(btn);
+        return btn;
+    }
+
+    function addFrameButtons() {
+        const playerControls = document.querySelector('.ytp-right-controls');
+        if (!playerControls || document.getElementById('ytp-frame-backward-button')) {
+            return;
+        }
+
+        const frameBackwardButton = createStyledButton('ytp-frame-backward-button', SVG_BACKWARD, 'Previous Frame');
+        attachHoldEvents(frameBackwardButton, ',', 'Comma', 188);
+
+        const frameForwardButton = createStyledButton('ytp-frame-forward-button', SVG_FORWARD, 'Next Frame');
+        attachHoldEvents(frameForwardButton, '.', 'Period', 190);
+
+        playerControls.insertBefore(frameForwardButton, playerControls.firstChild);
+        playerControls.insertBefore(frameBackwardButton, playerControls.firstChild);
+    }
+
+    const observer = new MutationObserver(() => {
         if (document.querySelector('.ytp-right-controls')) {
-            observer.disconnect(); // Stop observing once the button is added
             addFrameButtons();
         }
     });
