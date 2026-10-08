@@ -5,6 +5,8 @@
 // @description Adds a button to YouTube's player to trigger frame advance.
 // @match https://www.youtube.com/watch?v=*
 // @grant none
+// @updateURL   https://raw.githubusercontent.com/kurtchirhart/youtube-frame-by-frame/master/youtube-frame-by-frame-gm.js
+// @downloadURL https://raw.githubusercontent.com/kurtchirhart/youtube-frame-by-frame/master/youtube-frame-by-frame-gm.js
 // ==/UserScript==
 
 (function() {
